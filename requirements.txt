@@ -1,0 +1,14 @@
+torch
+torchvision
+matplotlib
+ipykernel
+modelcif
+pip
+ffmpeg
+py3dmol
+nbformat
+nbconvert
+transformers
+lightning
+datasets
+tensorboard

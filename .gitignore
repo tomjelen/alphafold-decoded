@@ -19,3 +19,5 @@ bunny_animation.mp4
 **/control_values/full_batch.pt
 **/control_values/initial_data.pt
 **/control_values/msa_feat.pt
+
+venv/
