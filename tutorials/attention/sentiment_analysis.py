@@ -12,12 +12,12 @@ class AttentionBlock(nn.Module):
 
     def __init__(self, hidden_size, intermediate_size, N_head):
         """
-        Initialize AttentionBlock for a transformer. 
+        Initialize AttentionBlock for a transformer.
 
         Args:
             hidden_size (int): Dimension of the module's input and output.
-            intermediate_size (int): Hidden dimension for the intermediate 
-            feed-forward module. 
+            intermediate_size (int): Hidden dimension for the intermediate
+            feed-forward module.
             N_head (int): Number of heads for multi-head attention.
         """
         super().__init__()
@@ -31,8 +31,21 @@ class AttentionBlock(nn.Module):
         #   after concatenation.                                                 #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.mha = MultiHeadAttention(c_in=hidden_size,
+                                      c=hidden_size // N_head,
+                                      N_head=N_head,
+                                      attn_dim=-2,
+                                      use_bias_for_embeddings=True)
+
+        self.layer_norm_1 = nn.LayerNorm(hidden_size)
+
+        self.intermediate = nn.Sequential(
+            nn.Linear(hidden_size, intermediate_size),
+            nn.GELU(),
+            nn.Linear(intermediate_size, hidden_size),
+        )
+
+        self.layer_norm_2 = nn.LayerNorm(hidden_size)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -46,8 +59,8 @@ class AttentionBlock(nn.Module):
         Args:
             x (torch.tensor): Input tensor of shape (*, T, c) where T denotes the
                 temporal dimension along which attention is performed, and c is the hidden_size.
-            attention_mask (torch.tensor, optional): Attention mask of 
-                shape (*, k). If not None, values that are equal to zero 
+            attention_mask (torch.tensor, optional): Attention mask of
+                shape (*, k). If not None, values that are equal to zero
                 in the mask are masked out during attention. Defaults to None.
 
         Returns:
@@ -60,8 +73,10 @@ class AttentionBlock(nn.Module):
         # TODO: Compute the forward pass for the layer as described above.       #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        attn = self.mha(x, attention_mask=attention_mask)
+        x = self.layer_norm_1(attn+x)
+        feedforward = self.intermediate(x)
+        out = self.layer_norm_2(feedforward+x)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -73,16 +88,16 @@ class AttentionBlock(nn.Module):
 class SentimentAnalysis(nn.Module):
     """
     Implements a transformer encoder for the use of sentiment analysis.
-    The module uses learned positional encodings. After the attention 
-    blocks, the output at the position of the <Start> token is fed 
-    through a two-layer feed-forward classifier to classify the input 
+    The module uses learned positional encodings. After the attention
+    blocks, the output at the position of the <Start> token is fed
+    through a two-layer feed-forward classifier to classify the input
     as either negative or positive.
 
     Attributes:
         vocab_size (int): The number of tokens in the vocabulary.
         hidden_size (int): Dimension of input and output in attention blocks,
             as well as word and position embeddings.
-        intermediate_size (int): Dimension of the intermediate layer in the 
+        intermediate_size (int): Dimension of the intermediate layer in the
             feed-forward module of the attention blocks.
         N_head (int): Number of heads in the attention blocks.
         num_blocks (int): Number of attention blocks.
@@ -92,12 +107,12 @@ class SentimentAnalysis(nn.Module):
 
     def __init__(self, vocab_size, hidden_size, intermediate_size, N_head, num_blocks, input_length):
         """
-        Initialize the SentimentAnalysis module. 
+        Initialize the SentimentAnalysis module.
 
         Args:
             vocab_size (int): The number of tokens in the vocabulary.
             hidden_size (int): Dimensions of input and output in attention blocks,
-                as well as word and position embeddings. hidden_size should be 
+                as well as word and position embeddings. hidden_size should be
                 divisible by N_head.
             intermediate_size (int): Dimension of the intermediate layer in the
                 feed-forward module of the attention blocks.
@@ -118,18 +133,34 @@ class SentimentAnalysis(nn.Module):
         #   to zero (the padding token in the vocabulary).                       #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.word_embeddings = nn.Embedding(num_embeddings=vocab_size,
+                                            embedding_dim=hidden_size,
+                                            padding_idx=0)
+
+        self.position_embeddings = nn.Embedding(num_embeddings=input_length,
+                                                embedding_dim=hidden_size)
+
+        self.layer_norm = nn.LayerNorm(hidden_size)
+
+        self.blocks = nn.ModuleList(
+            [AttentionBlock(hidden_size, intermediate_size, N_head) for _ in range(num_blocks)]
+        )
+
+        self.out = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 2),
+        )
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
-    
-    def forward(self, inp, attention_mask=None):
+
+    def forward(self, inp:torch.Tensor, attention_mask=None):
         """
         Forward pass for the SentimentAnalysis module consisting of the following steps:
 
-        1. word_embeddings + position_embeddings 
+        1. word_embeddings + position_embeddings
         2. Layer normalization
         3. Multiple attention blocks
         4. Extract the representation at the <Start> token position (at index 0).
@@ -138,8 +169,8 @@ class SentimentAnalysis(nn.Module):
         Args:
             inp (torch.tensor): Input tensor of shape (*, T) consisting of
                 the token indices in the input sentence. Here, T is the input length.
-            attention_mask (torch.tensor, optional): Attention mask of 
-                shape (*, k). If not None, values that are equal to zero 
+            attention_mask (torch.tensor, optional): Attention mask of
+                shape (*, k). If not None, values that are equal to zero
                 in the mask are masked out in all attention blocks. Defaults to None.
 
         Returns:
@@ -153,8 +184,22 @@ class SentimentAnalysis(nn.Module):
         #   the indices to select the position embeddings using `torch.arange`.  #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        T = inp.shape[-1]
+
+        # Lets puke instead of hiding it with cropping
+        if T > self.input_length:
+            raise ValueError(f"Input sequence length {T} exceeds maximum length {self.input_length}")
+
+        positions = torch.arange(0, T).to(inp.device)
+
+        x = self.word_embeddings(inp) + self.position_embeddings(positions)
+        x = self.layer_norm(x)
+
+        for block in self.blocks:
+            x = block(x, attention_mask=attention_mask)
+
+        x = x[..., 0, :] # (B,T,S) -> (B,S)
+        out = self.out(x)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -163,8 +208,8 @@ class SentimentAnalysis(nn.Module):
         return out
 
 class SentimentWrapper(pl.LightningModule):
-    
-    def __init__(self, model, learning_rate=2e-5):
+
+    def __init__(self, model:SentimentAnalysis, learning_rate=2e-5):
         super().__init__()
         self.model = model
         self.learning_rate = learning_rate
@@ -173,8 +218,7 @@ class SentimentWrapper(pl.LightningModule):
         # TODO: Initialize criterion as `CrossEntropyLoss`.                      #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.criterion = nn.CrossEntropyLoss()
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -188,8 +232,7 @@ class SentimentWrapper(pl.LightningModule):
         # TODO: Forward the input to the wrapped SentimentAnalysis module.       #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        out = self.model.forward(inp, attention_mask=attention_mask)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -207,8 +250,12 @@ class SentimentWrapper(pl.LightningModule):
         #   initialized in __init__) and the accuracy on the batch.              #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        out = self.model.forward(inp, attention_mask=attn_mask)
+
+        predicted_classes = out.argmax(dim=-1)
+        accuracy = (predicted_classes == labels).float().mean()
+
+        loss = self.criterion(out, labels)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -227,9 +274,17 @@ class SentimentWrapper(pl.LightningModule):
         #   Validation only happens every epoch anyway, so you don't need to     #
         #   specify on_epoch for logging.                                        #
         ##########################################################################
+        inp, attn_mask, labels = batch['input_ids'], batch['attention_mask'], batch['label']
 
-        # Replace "pass" statement with your code
-        pass
+        out = self.model.forward(inp, attention_mask=attn_mask)
+
+        predicted_classes = out.argmax(dim=-1)
+        accuracy = (predicted_classes == labels).float().mean()
+
+        loss = self.criterion(out, labels)
+
+        self.log('val_loss', loss, prog_bar=True)
+        self.log('val_acc', accuracy, on_epoch=True, prog_bar=True)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -244,8 +299,8 @@ class SentimentWrapper(pl.LightningModule):
         #   self.learning_rate.                                                  #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        optimizer = torch.optim.AdamW(params=self.model.parameters(),
+                                      lr=self.learning_rate)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -253,7 +308,7 @@ class SentimentWrapper(pl.LightningModule):
 
         return optimizer
 
-        
+
 def map_keynames_from_distilbert(named_parameters):
     name_map = {
         'distilbert.': '',
@@ -272,7 +327,7 @@ def map_keynames_from_distilbert(named_parameters):
         'output_layer_norm': 'layer_norm_2',
         'pre_classifier': 'out.0',
         'classifier': 'out.2',
-        
+
     }
 
     new_parameters = dict()
