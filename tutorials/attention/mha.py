@@ -248,10 +248,10 @@ class MultiHeadAttention(nn.Module):
         attn = attn.flatten(-2)                   # (*, q, N_head, c)  -> (*, q, N_head * c)
         attn = attn.movedim(-2, self.attn_dim)    # (*, q, N_head * c) -> (*, q, *, N_head * c)
 
-        out = self.linear_o(attn)
-
         if self.gated:
-            out = torch.sigmoid(self.linear_g(out)) * out
+            attn = torch.sigmoid(self.linear_g(x)) * attn
+
+        out = self.linear_o(attn)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
