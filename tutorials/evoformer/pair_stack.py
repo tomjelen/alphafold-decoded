@@ -3,6 +3,7 @@ from torch import nn
 from evoformer.dropout import DropoutRowwise, DropoutColumnwise
 from attention.mha import MultiHeadAttention
 
+
 class TriangleMultiplication(nn.Module):
     """
     Implements Algorithm 11 and Algorithm 12.
@@ -34,8 +35,18 @@ class TriangleMultiplication(nn.Module):
         #   linear_b_p and linear_z.                                             #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.layer_norm_in = nn.LayerNorm(c_z)
+
+        self.linear_a_p = nn.Linear(c_z, c)
+        self.linear_a_g = nn.Linear(c_z, c)
+
+        self.linear_b_p = nn.Linear(c_z, c)
+        self.linear_b_g = nn.Linear(c_z, c)
+
+        self.linear_z = nn.Linear(c, c_z)
+        self.linear_g = nn.Linear(c_z, c_z)
+
+        self.layer_norm_out = nn.LayerNorm(c)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -63,8 +74,22 @@ class TriangleMultiplication(nn.Module):
         #   using torch.einsum.                                                  #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        z = self.layer_norm_in(z)                                   # (*, N_res, N_res, c_z)
+        a = torch.sigmoid(self.linear_a_g(z)) * self.linear_a_p(z)  # (*, N_res, N_res, c)
+        b = torch.sigmoid(self.linear_b_g(z)) * self.linear_b_p(z)  # (*, N_res, N_res, c)
+        g = torch.sigmoid(self.linear_g(z))                         # (*, N_res, N_res, c_z)
+
+        if self.mult_type == "outgoing":
+            # Alg 11
+            triangle_sum = torch.einsum('...ikc,...jkc->...ijc', a, b)
+        else:
+            # Alg 12
+            triangle_sum = torch.einsum('...kic,...kjc->...ijc', a, b)
+
+        # Output projection with gating
+        z = self.layer_norm_out(triangle_sum)
+        z = self.linear_z(z)
+        out = g * z
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -105,14 +130,21 @@ class TriangleAttention(nn.Module):
         #   ending node, it is the other way around.                             #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.layer_norm = nn.LayerNorm(c_z)
+        self.mha = MultiHeadAttention(
+            c_in=c_z,
+            c=c,
+            N_head=N_head,
+            attn_dim=-2 if node_type == 'starting_node' else -3,
+            gated=True,
+        )
+        self.linear = nn.Linear(c_z, N_head, bias=False)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
 
-    def forward(self, z):
+    def forward(self, z:torch.Tensor):
         """
         Implements the forward pass for Algorithm 13 or Algorithm 14, depending
         if node_type is set to 'starting_node' or 'ending_node'.
@@ -136,8 +168,14 @@ class TriangleAttention(nn.Module):
         #   outgoing bias b_ik: The bias is transposed.                          #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        z:torch.Tensor = self.layer_norm(z)             # (*, N_res, N_res, c_z)
+        b:torch.Tensor = self.linear(z)                 # (*, N_res, N_res, N_head)
+        b:torch.Tensor = b.movedim(-1, -3)              # (*, N_head, N_res, N_res)
+
+        if self.node_type == "ending_node":
+            b = b.transpose(-1, -2)                     # (*, N_head, N_res, N_res)
+
+        out = self.mha(z, bias=b)                       # (*, N_res, N_res, c_z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -149,15 +187,15 @@ class PairTransition(nn.Module):
     """
     Implements Algorithm 15.
     """
-    
+
     def __init__(self, c_z, n=4):
         """
         Initializes the PairTransition.
 
         Args:
             c_z (int): Embedding dimension of the pair representation.
-            n (int, optional): Factor by which the number of intermediate channels 
-                expands the original number of channels. 
+            n (int, optional): Factor by which the number of intermediate channels
+                expands the original number of channels.
                 Defaults to 4.
         """
         super().__init__()
@@ -166,8 +204,9 @@ class PairTransition(nn.Module):
         # TODO: Initialize the modules layer_norm, linear_1, relu and linear_2.  #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.layer_norm = nn.LayerNorm(c_z)
+        self.linear_1 = nn.Linear(c_z, c_z*n)
+        self.linear_2 = nn.Linear(c_z*n, c_z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -183,21 +222,23 @@ class PairTransition(nn.Module):
         Returns:
             torch.tensor: Output tensor of the same shape as z.
         """
-        
+
         out = None
-        
+
         ##########################################################################
         # TODO: Implement the forward pass for Algorithm 15.                     #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        z = self.layer_norm(z)
+        a = self.linear_1(z)
+        out = self.linear_2(torch.relu(a))
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
 
         return out
+
 
 
 class PairStack(nn.Module):
@@ -215,13 +256,16 @@ class PairStack(nn.Module):
         super().__init__()
 
         ##########################################################################
-        # TODO: Initialize the modules tri_mul_out, tri_ul_in, tri_att_start,    #
+        # TODO: Initialize the modules tri_mul_out, tri_mul_in, tri_att_start,    #
         #   tri_att_end, pair_transition, and (optionally for inference)         #
         #   dropout_rowwise and dropout_columnwise.                              #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.tri_mul_out = TriangleMultiplication(c_z, "outgoing")
+        self.tri_mul_in = TriangleMultiplication(c_z, "incoming")
+        self.tri_att_start = TriangleAttention(c_z, "starting_node")
+        self.tri_att_end = TriangleAttention(c_z, "ending_node")
+        self.pair_transition = PairTransition(c_z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -239,17 +283,19 @@ class PairStack(nn.Module):
         """
 
         out = None
-        
+
         ##########################################################################
         # TODO: Implement the forward pass for the pair stack from Algorithm 6.  #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        z = z + self.tri_mul_out(z)
+        z = z + self.tri_mul_in(z)
+        z = z + self.tri_att_start(z)
+        z = z + self.tri_att_end(z)
+        out = z + self.pair_transition(z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
-        
+
         return out
-        

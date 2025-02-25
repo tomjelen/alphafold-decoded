@@ -25,14 +25,22 @@ class MSARowAttentionWithPairBias(nn.Module):
         #        one value per head, therefore c_out is N_head.                  #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.layer_norm_m = torch.nn.LayerNorm(c_m)
+        self.layer_norm_z = torch.nn.LayerNorm(c_z)
+        self.linear_z = torch.nn.Linear(c_z, N_head, bias=False)
+        self.mha = MultiHeadAttention(
+            c_in=c_m,
+            c=c,
+            N_head=N_head,
+            attn_dim=-2,
+            gated=True,
+        )
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
 
-    def forward(self, m, z):
+    def forward(self, m:torch.Tensor, z:torch.Tensor):
         """
         Implements the forward pass according to Algorithm 7.
 
@@ -50,8 +58,13 @@ class MSARowAttentionWithPairBias(nn.Module):
         #       (*, N_head, z, z) for MultiHeadAttention.                        #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        m = self.layer_norm_m(m)
+
+        b = self.layer_norm_z(z)
+        b = self.linear_z(b)
+        b = b.movedim(-1, -3) # (*, z, z, N_head) -> (*, N_head, z, z)
+
+        out = self.mha(m, bias=b)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -78,8 +91,14 @@ class MSAColumnAttention(nn.Module):
         # TODO: Initialize the modules layer_norm_m and mha for Algorithm 8.     #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.layer_norm_m = torch.nn.LayerNorm(c_m)
+        self.mha = MultiHeadAttention(
+            c_in=c_m,
+            c=c,
+            N_head=N_head,
+            attn_dim=-3,
+            gated=True,
+        )
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -102,8 +121,8 @@ class MSAColumnAttention(nn.Module):
         # TODO: Implement the forward pass for Algorithm 8.                      #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        m = self.layer_norm_m(m)
+        out = self.mha(m)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -122,7 +141,7 @@ class MSATransition(nn.Module):
 
         Args:
             c_m (int): Embedding dimension of the MSA representation.
-            n (int, optional): Factor for the number of channels in the intermediate dimension. 
+            n (int, optional): Factor for the number of channels in the intermediate dimension.
              Defaults to 4.
         """
         super().__init__()
@@ -132,8 +151,10 @@ class MSATransition(nn.Module):
         #   for Algorithm 9.
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.layer_norm = nn.LayerNorm(c_m)
+        self.linear_1 = nn.Linear(c_m, c_m*n)
+        self.relu = nn.ReLU()
+        self.linear_2 = nn.Linear(c_m*n, c_m)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -155,8 +176,10 @@ class MSATransition(nn.Module):
         # TODO: Implement the forward pass for Algorithm 9.                      #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        m = self.layer_norm(m)
+        m = self.linear_1(m)
+        m = self.relu(m)
+        out = self.linear_2(m)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -174,20 +197,22 @@ class OuterProductMean(nn.Module):
 
         Args:
             c_m (int): Embedding dimension of the MSA representation.
-            c_z (int): Embedding dimension of the pair representation. 
-            c (int, optional): Embedding dimension of a and b from Algorithm 10. 
+            c_z (int): Embedding dimension of the pair representation.
+            c (int, optional): Embedding dimension of a and b from Algorithm 10.
                 Defaults to 32.
         """
         super().__init__()
-        
+
         ##########################################################################
         # TODO: Initialize the modules layer_norm, linear_1, linear_2 and        #
         #   linear_out for Algorithm 10. linear_1 creates the embdding for a,    #
         #   while linear_2 creates the embedding for b.                          #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.layer_norm = nn.LayerNorm(c_m)
+        self.linear_1 = nn.Linear(c_m, c)
+        self.linear_2 = nn.Linear(c_m, c)
+        self.linear_out = nn.Linear(c*c, c_z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -209,7 +234,7 @@ class OuterProductMean(nn.Module):
         ##########################################################################
         # TODO: Implement the forward pass for Algorithm 10. In contrast to the  #
         #   supplement, the AlphaFold implementation doesn't compute the mean    #
-        #   in line 3, but the sum overr all sequences. Instead, the output z    #
+        #   in line 3, but the sum over all sequences. Instead, the output z     #
         #   is divided by N_seq after line 4. This changes the results, as the   #
         #   biases of the affine linear output layer are affected by the         #
         #   scaling as well. We follow the implementation.                       #
@@ -217,12 +242,19 @@ class OuterProductMean(nn.Module):
         #   After summation over the sequences, the intermediate o has shape     #
         #   (*, N_res, N_res, c, c) before flattening to (*, N_res, N_res, c*c). #
         #                                                                        #
-        #   The outer product and the summation over the sequences in line 4     #
+        #   The outer product and the summation over the sequences in line 3     #
         #   can be computed efficiently using torch.einsum.                      #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        m = self.layer_norm(m)                              # (*, N_seq, N_res, c_m)
+        a = self.linear_1(m)                                # (*, N_seq, N_res, c)
+        b = self.linear_2(m)                                # (*, N_seq, N_res, c)
+
+        o = torch.einsum("...sia,...sjb->...ijab", a, b)    # (*, N_res, N_res, c, c)
+        o = o.flatten(start_dim=-2)                         # (*, N_res, N_res, c*c)
+
+        z = self.linear_out(o)                              # (*, N_res, N_res, c_z)
+        z = z / N_seq                                       # (*, N_res, N_res, c_z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #

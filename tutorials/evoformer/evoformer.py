@@ -9,7 +9,7 @@ class EvoformerBlock(nn.Module):
     """
     Implements one block from Algorithm 6.
     """
-    
+
     def __init__(self, c_m, c_z):
         """Initializes EvoformerBlock.
 
@@ -25,13 +25,16 @@ class EvoformerBlock(nn.Module):
         #   inference) dropout_rowwise_m.                                        #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.msa_att_row = MSARowAttentionWithPairBias(c_m, c_z)
+        self.msa_att_col = MSAColumnAttention(c_m)
+        self.msa_transition = MSATransition(c_m)
+        self.outer_product_mean = OuterProductMean(c_m, c_z)
+        self.core = PairStack(c_z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
-    
+
     def forward(self, m, z):
         """
         Implements the forward pass for one block in Algorithm 6.
@@ -48,8 +51,16 @@ class EvoformerBlock(nn.Module):
         # TODO: Implement  the forward pass for Algorithm 6.                     #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        # MSA stack
+        m = m + self.msa_att_row(m, z)
+        m = m + self.msa_att_col(m)
+        m = m + self.msa_transition(m)
+
+        # Communication
+        z = z + self.outer_product_mean(m)
+
+        # Pair stack
+        z = self.core(z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -61,7 +72,7 @@ class EvoformerStack(nn.Module):
     """
     Implements Algorithm 6.
     """
-    
+
     def __init__(self, c_m, c_z, num_blocks, c_s=384):
         """
         Initializes the EvoformerStack.
@@ -70,7 +81,7 @@ class EvoformerStack(nn.Module):
             c_m (int): Embedding dimension of the MSA representation.
             c_z (int): Embedding dimension of the pair representation.
             num_blocks (int): Number of blocks for the Evoformer.
-            c_s (int, optional): Number of channels for the single representation. 
+            c_s (int, optional): Number of channels for the single representation.
                 Defaults to 384.
         """
         super().__init__()
@@ -80,8 +91,8 @@ class EvoformerStack(nn.Module):
         #   and self.linear as the extraction of the single representation.      #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.blocks = nn.ModuleList([EvoformerBlock(c_m, c_z) for _ in range(num_blocks)])
+        self.linear = nn.Linear(c_m, c_s)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -97,7 +108,7 @@ class EvoformerStack(nn.Module):
 
         Returns:
             tuple: Output tensors m, z, and s, where m and z have the same shape
-                as the inputs and s has shape (*, N_res, c_s)  
+                as the inputs and s has shape (*, N_res, c_s)
         """
 
         s = None
@@ -108,12 +119,14 @@ class EvoformerStack(nn.Module):
         #   of the msa representation.                                           #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        for _, evo_block in enumerate(self.blocks):
+            m, z = evo_block(m, z)
+
+        single_representation = m[..., 0, :, :] # MSA representation for the first sequence (target sequence)
+        s = self.linear(single_representation)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
 
         return m, z, s
-         
