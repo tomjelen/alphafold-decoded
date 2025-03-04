@@ -8,7 +8,7 @@ class ExtraMsaEmbedder(nn.Module):
     """
     Creates the embeddings of extra_msa_feat for the Extra MSA Stack.
     """
-    
+
     def __init__(self, f_e, c_e):
         """
         Initializes the ExtraMSAEmbedder.
@@ -18,13 +18,12 @@ class ExtraMsaEmbedder(nn.Module):
             c_e (int): Embedding dimension of the extra_msa_feat.
         """
         super().__init__()
-        
+
         ##########################################################################
         # TODO: Initialize the module self.linear for the extra MSA embedding.   #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.linear = nn.Linear(f_e, c_e)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -50,8 +49,7 @@ class ExtraMsaEmbedder(nn.Module):
         # TODO: Pass extra_msa_feat through the linear layer defined in init.    #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        out = self.linear(e)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -63,7 +61,7 @@ class MSAColumnGlobalAttention(nn.Module):
     """
     Implements Algorithm 19.
     """
-    
+
     def __init__(self, c_m, c_z, c=8, N_head=8):
         """
         Initializes MSAColumnGlobalAttention.
@@ -83,8 +81,15 @@ class MSAColumnGlobalAttention(nn.Module):
         #   attention.                                                           #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.layer_norm_m = nn.LayerNorm(c_m)
+        self.global_attention = MultiHeadAttention(
+            c_in=c_m,
+            c=c,
+            N_head=N_head,
+            attn_dim=-3,
+            gated=True,
+            is_global=True,
+        )
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -102,13 +107,13 @@ class MSAColumnGlobalAttention(nn.Module):
         """
 
         out = None
-        
+
         ##########################################################################
         # TODO: Implement the forward pass for Algorithm 19.                     #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        m = self.layer_norm_m(m)
+        out = self.global_attention(m)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -121,7 +126,7 @@ class ExtraMsaBlock(nn.Module):
     """
     Implements one block for Algorithm 18.
     """
-    
+
     def __init__(self, c_e, c_z):
         """
         Initializes ExtraMSABlock.
@@ -140,8 +145,11 @@ class ExtraMsaBlock(nn.Module):
         #   column attention.                                                    #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.msa_att_row = MSARowAttentionWithPairBias(c_e, c_z, c=8)
+        self.msa_att_col = MSAColumnGlobalAttention(c_e, c_z)
+        self.msa_transition = MSATransition(c_e)
+        self.outer_product_mean = OuterProductMean(c_e, c_z)
+        self.core = PairStack(c_z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -164,22 +172,30 @@ class ExtraMsaBlock(nn.Module):
         #   similar to your implementation in EvoformerBlock.                    #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        # MSA stack
+        e = e + self.msa_att_row(e, z)
+        e = e + self.msa_att_col(e)
+        e = e + self.msa_transition(e)
+
+        # Communication
+        z = z + self.outer_product_mean(e)
+
+        # Pair stack
+        z = self.core(z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
 
         return e, z
-        
+
 
 
 class ExtraMsaStack(nn.Module):
     """
     Implements Algorithm 18.
     """
-    
+
     def __init__(self, c_e, c_z, num_blocks):
         """
         Initializes the ExtraMSAStack.
@@ -195,8 +211,7 @@ class ExtraMsaStack(nn.Module):
         # TODO: Initialize self.blocks as a ModuleList of ExtraMSABlocks.        #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        self.blocks = nn.ModuleList([ExtraMsaBlock(c_e, c_z) for _ in range(num_blocks)])
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
@@ -218,8 +233,8 @@ class ExtraMsaStack(nn.Module):
         # TODO: Implement the forward pass for Algorithm 18.                     #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        for block in self.blocks:
+            e, z = block(e, z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #

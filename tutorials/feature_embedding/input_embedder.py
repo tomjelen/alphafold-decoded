@@ -14,9 +14,9 @@ class InputEmbedder(nn.Module):
             c_m (int): Embedding dimension of the MSA representation.
             c_z (int): Embedding dimension of the pair representation.
             tf_dim (int): Embedding dimension of target_feat.
-            msa_feat_dim (int, optional): Embedding dimension of the MSA feature. 
+            msa_feat_dim (int, optional): Embedding dimension of the MSA feature.
                 Defaults to 49.
-            vbins (int, optional): Determines the bins for relpos as 
+            vbins (int, optional): Determines the bins for relpos as
                 (-vbins, -vbins+1,...,vbins). Defaults to 32.
         """
         super().__init__()
@@ -32,14 +32,20 @@ class InputEmbedder(nn.Module):
         #   that is used throughout the Evoformer.                               #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+
+        self.linear_tf_z_i = nn.Linear(tf_dim, c_z)
+        self.linear_tf_z_j = nn.Linear(tf_dim, c_z)
+        self.linear_tf_m = nn.Linear(tf_dim, c_m)
+        self.linear_msa_m = nn.Linear(msa_feat_dim, c_m)
+
+        actual_vbins = 2 * vbins + 1 # (-vbins, -vbins+1, ..., 0, ..., vbins-1, vbins)
+        self.linear_relpos = nn.Linear(actual_vbins, c_z)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
 
-    def relpos(self, residue_index):
+    def relpos(self, residue_index:torch.Tensor):
         """
         Implements Algorithm 4.
 
@@ -48,7 +54,7 @@ class InputEmbedder(nn.Module):
                 acid sequence. In this context, this is simply [0,... N_res-1].
 
         Returns:
-            tuple: Tuple consisting of the embedded MSA representation m and 
+            tuple: Tuple consisting of the embedded MSA representation m and
                 pair representation z.
         """
 
@@ -70,15 +76,27 @@ class InputEmbedder(nn.Module):
         #   * use the linear module to create the output embedding.              #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        actual_vbins = 2 * self.vbins + 1
+        residue_index = residue_index.long()
+
+        # torch.tensor([[0],  -   torch.tensor([[0, 1, 2, 3]])   =   tensor([[ 0, -1, -2, -3],
+        #               [1],                                                 [ 1,  0, -1, -2],
+        #               [2],                                                 [ 2,  1,  0, -1],
+        #               [3]])                                                [ 3,  2,  1,  0]])
+        d = residue_index.unsqueeze(-1) - residue_index.unsqueeze(-2) #
+        d = d.clamp(min=-self.vbins, max=self.vbins) + self.vbins
+
+        d = nn.functional.one_hot(d, num_classes=actual_vbins)
+        d = d.to(dtype)
+
+        out = self.linear_relpos(d)
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
         ##########################################################################
 
         return out
-        
+
 
     def forward(self, batch):
         """
@@ -110,8 +128,23 @@ class InputEmbedder(nn.Module):
         #   the number of dimensions of msa_feat.                                #
         ##########################################################################
 
-        # Replace "pass" statement with your code
-        pass
+        # Linear projections of the target features
+        a = self.linear_tf_z_i(target_feat)                             # (*, N_res, c_z)
+        b = self.linear_tf_z_j(target_feat)                             # (*, N_res, c_z)
+
+        # Create pair representation through outer sum:
+        # 1. unsqueeze(-2): Add dimension for residue j, creating shape   (*, N_res, 1,     c_z)
+        # 2. unsqueeze(-3): Add dimension for residue i, creating shape   (*, 1,     N_res, c_z)
+        # 3. When added, broadcasting creates all-vs-all pairs with shape (*, N_res, N_res, c_z)
+        z = a.unsqueeze(-2) + b.unsqueeze(-3)
+
+        # Add relative positional encoding
+        z = z + self.relpos(residue_index)
+
+        # Create MSA representation:
+        # unsqueeze(-3): Add sequence dimension to target_feat, making it shape (*, 1,     N_res, tf_dim)
+        # This allows broadcasting when adding to msa_feat which has shape      (*, N_seq, N_res, msa_feat_dim)
+        m = self.linear_msa_m(msa_feat) + self.linear_tf_m(target_feat.unsqueeze(-3))
 
         ##########################################################################
         #               END OF YOUR CODE                                         #
